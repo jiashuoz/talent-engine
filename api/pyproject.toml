@@ -1,0 +1,5 @@
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["v1"]
+python_files = ["test_*.py"]
+pythonpath = ["."]

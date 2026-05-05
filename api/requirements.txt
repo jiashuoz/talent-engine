@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+python-multipart
+pydantic>=2.0.0
+sqlalchemy>=2.0.0
+greenlet
+asyncpg
+psycopg2-binary
+httpx
+resend
+baml-py==0.220.0
+baml-cli
