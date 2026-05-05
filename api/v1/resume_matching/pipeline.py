@@ -80,9 +80,25 @@ class MatchReport:
 
 
 async def _parse_resume(item: ResumeInput) -> tuple[str, Optional[Resume], Optional[str]]:
+    """Extract PDF text + parse via BAML.
+
+    Routes through the runtime-selected provider (`LLM_PROVIDER` env var)
+    so the same code works for Gemini, Qwen, Hunyuan, DeepSeek. PDF text
+    extraction happens in Python via pypdf — see
+    `v1.resume.pdf_text.extract_pdf_text` for the rationale.
+    """
+    from v1.resume.pdf_text import PdfExtractionError, extract_pdf_text
+    from v1.resume_matching.llm_config import resolve_llm_provider
+
     try:
-        pdf = Pdf.from_base64(_b64(item.pdf_bytes))
-        resume = await b.ParseResume(resume_pdf=pdf)
+        text = extract_pdf_text(item.pdf_bytes)
+    except PdfExtractionError as e:
+        return item.filename, None, f"PdfExtractionError: {e}"
+    try:
+        resume = await b.ParseResume(
+            text=text,
+            baml_options={"client": resolve_llm_provider()},
+        )
         return item.filename, resume, None
     except Exception as e:
         logger.exception("ParseResume failed for %s", item.filename)
@@ -110,7 +126,10 @@ async def _parse_jobs(item: JobInput) -> tuple[str, List[Job], Optional[str]]:
     so the pipeline still produces something instead of silently dropping
     the whole file.
     """
+    from v1.resume_matching.llm_config import resolve_llm_provider
+
     text = item.text
+    provider = resolve_llm_provider()
     try:
         chunks = _split_jd_text(text)
         if not chunks:
@@ -121,11 +140,14 @@ async def _parse_jobs(item: JobInput) -> tuple[str, List[Job], Optional[str]]:
                 "No 招聘单位 headers in %s — falling back to list parse",
                 item.filename,
             )
-            jobs = await b.ParseJobDescriptions(text=text)
+            jobs = await b.ParseJobDescriptions(
+                text=text,
+                baml_options={"client": provider},
+            )
             return item.filename, jobs, None
 
         parsed = await asyncio.gather(
-            *[b.ParseSingleJob(text=c) for c in chunks],
+            *[b.ParseSingleJob(text=c, baml_options={"client": provider}) for c in chunks],
             return_exceptions=True,
         )
         jobs: List[Job] = []
@@ -228,9 +250,10 @@ async def score_pairs(
         collector = Collector(name="resume-matching-score")
         try:
             async with sem:
+                from v1.resume_matching.llm_config import resolve_llm_provider
                 score = await b.ScoreMatch(
                     resume=resume, job=job,
-                    baml_options={"collector": collector},
+                    baml_options={"client": resolve_llm_provider(), "collector": collector},
                 )
             in_tok, out_tok = _collector_tokens(collector)
             counter["done"] += 1

@@ -19,7 +19,7 @@
 // missing, which is the hook for the client's resume-coaching service.
 
 function ScoreMatch(resume: Resume, job: Job) -> MatchScore {
-  client Gemini
+  client Default
   prompt #"
     You are evaluating how well a Chinese job candidate fits a Chinese
     job posting. Output a single MatchScore.

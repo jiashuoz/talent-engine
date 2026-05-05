@@ -84,11 +84,13 @@ class BamlStub:
         self.parse_calls = 0
         self.fail_filenames: set[str] = set()
         self.name_for_call: List[str] = []
+        self.last_client: str | None = None
 
-    async def ParseResume(self, *, resume_pdf, baml_options=None) -> BamlResume:  # noqa: N802
+    async def ParseResume(self, *, text, baml_options=None) -> BamlResume:  # noqa: N802
         self.parse_calls += 1
-        # We can't see filenames inside the BAML call (it gets a Pdf object),
-        # so tests trigger failures via .fail_on_call_index.
+        # Capture the requested provider so tests can assert it was forwarded.
+        if baml_options and "client" in baml_options:
+            self.last_client = baml_options["client"]
         if self.parse_calls in self.fail_call_indices:
             raise RuntimeError(f"simulated parse failure on call {self.parse_calls}")
         name = self.name_for_call[self.parse_calls - 1] if (
@@ -110,6 +112,8 @@ def baml(monkeypatch) -> BamlStub:
     stub = BamlStub()
     stub.fail_call_indices = set()
     monkeypatch.setattr(parse_router_mod, "b", stub)
+    # Stub PDF text extraction — fake PDF bytes can't be parsed by pypdf.
+    monkeypatch.setattr(parse_router_mod, "extract_pdf_text", lambda pdf_bytes: "fake resume text")
     return stub
 
 
@@ -296,6 +300,51 @@ async def test_parse_logs_usage_row(client, api_key, baml, engine):
     assert row["pair_count"] == 2          # files-attempted (overloaded field)
     assert row["pairs_failed"] == 0
     assert row["status"] == "ok"
+
+
+async def test_parse_forwards_llm_provider_env(client, api_key, baml, monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "Qwen")
+    resp = await client.post(
+        "/v1/resume/parse",
+        files=_files(1),
+        headers={"X-API-Key": api_key},
+    )
+    assert resp.status_code == 200
+    assert baml.last_client == "Qwen"
+
+
+async def test_invalid_llm_provider_fails_fast(monkeypatch):
+    """Unknown LLM_PROVIDER raises at config-resolution time, before any
+    LLM call happens — so a typo'd deploy fails loud rather than silently."""
+    from v1.resume_matching.llm_config import resolve_llm_provider
+
+    monkeypatch.setenv("LLM_PROVIDER", "InventedModel")
+    with pytest.raises(ValueError, match="InventedModel"):
+        resolve_llm_provider()
+
+
+async def test_parse_surfaces_pdf_extraction_error(client, api_key, baml, monkeypatch):
+    """An empty/scanned-only PDF should land in errors[] without an LLM call."""
+    from v1.resume import pdf_text
+    from v1.resume.parse_router import _parse_one  # noqa: F401 — module access
+
+    def raise_pdf_err(pdf_bytes):
+        raise pdf_text.PdfExtractionError("simulated scanned PDF")
+
+    # Override the test fixture's stub for this case
+    import v1.resume.parse_router as parse_router_mod_local
+    monkeypatch.setattr(parse_router_mod_local, "extract_pdf_text", raise_pdf_err)
+    resp = await client.post(
+        "/v1/resume/parse",
+        files=_files(1),
+        headers={"X-API-Key": api_key},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["parsed"] == []
+    assert len(body["errors"]) == 1
+    assert "PdfExtractionError" in body["errors"][0]["error"]
+    assert baml.parse_calls == 0   # never reached the LLM
 
 
 async def test_parse_logs_pairs_failed_on_partial_failure(client, api_key, baml, engine):

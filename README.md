@@ -53,12 +53,23 @@ cd api && pytest
 
 Tests use SQLite in-memory and stub the BAML client — no Postgres or LLM credentials required.
 
-## China deployment notes
+## LLM provider selection
 
-The default BAML client targets Gemini via Vertex AI (`us-central1`), with Google AI Studio as fallback. Both are unreachable from mainland China. To deploy domestically:
+The `LLM_PROVIDER` env var picks which client BAML routes through at runtime — same image, different provider. Supported values:
 
-1. Edit `v1/resume_matching/baml_src/main.baml` to add a domestic model client (Qwen via DashScope, Doubao via Volcengine, DeepSeek, GLM, or Kimi). BAML's `openai-generic` provider works for most.
-2. Re-run `baml-cli generate`.
-3. Re-run the eval set in `scripts/test_public_api.py` to confirm match-quality regression is acceptable.
+| `LLM_PROVIDER` | Hosted by | Endpoint | Why pick |
+|---|---|---|---|
+| `Gemini` (default) | Google | Vertex AI / AI Studio | Original. Best for non-China deployments. |
+| `Qwen` | Aliyun DashScope | OpenAI-compatible | Strong Chinese, mature API. |
+| `Hunyuan` | Tencent | OpenAI-compatible | Best vendor consolidation if hosted on Tencent Cloud. |
+| `DeepSeek` | DeepSeek | OpenAI-compatible | Cheapest per token; text-only. |
 
-Recommended cloud target for mainland: Aliyun Function Compute (FC) or Serverless App Engine (SAE) — Cloud Run-equivalents that accept this Dockerfile directly. Aliyun also hosts the Qwen LLM, keeping vendor count low. ICP filing is required to serve from a mainland IP under a domain name.
+Wired through `baml_options={"client": LLM_PROVIDER}` at every BAML call site — see [llm_config.py](api/v1/resume_matching/llm_config.py) and [main.baml](api/v1/resume_matching/baml_src/main.baml). Unknown values fail loud at first request.
+
+Only set the API key for the active provider — leaving the others unset is fine. If you're switching providers mid-flight, re-run your eval set: structured-extraction quality varies meaningfully across models, and the prompts in `baml_src/` were originally tuned against Gemini.
+
+## China deployment
+
+For WeChat mini-program partners, deploy on **Tencent Cloud 微信云托管 (Cloud Hosting)**. See [DEPLOY-tencent.md](DEPLOY-tencent.md) for the full runbook. The killer feature: mini-programs can call your API without configuring a request-domain whitelist, removing the biggest friction in partner onboarding.
+
+PDF text extraction happens in Python via [pypdf](https://pypi.org/project/pypdf/) before any LLM call so the same code path works for all four providers — Qwen / Hunyuan / DeepSeek don't all support PDF input via OpenAI-compatible endpoints. Trade-off: scanned/image-only PDFs aren't supported (they surface as `PdfExtractionError`); add Tencent OCR or PaddleOCR upstream if you need them.

@@ -7,6 +7,6 @@ greenlet
 asyncpg
 psycopg2-binary
 httpx
-resend
+pypdf
 baml-py==0.220.0
 baml-cli

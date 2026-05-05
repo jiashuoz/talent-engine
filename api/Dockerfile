@@ -14,6 +14,9 @@ COPY . .
 # Generate the BAML client at build time so the image is self-contained.
 RUN cd v1/resume_matching && baml-cli generate
 
+# Listen on $PORT if injected (Tencent CloudBase, Cloud Run, Aliyun FC all do this);
+# fall back to 8000 for local docker-compose / direct runs.
+ENV PORT=8000
 EXPOSE 8000
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]

@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from v1.resume_matching.auth import require_api_key
 from v1.resume_matching.baml_client.async_client import b
+from v1.resume_matching.llm_config import resolve_llm_provider
 from v1.resume_matching.pipeline import _collector_tokens, _split_jd_text
 from v1.resume_matching.public_schema import from_baml_job
 from v1.resume_matching.storage import ApiKeyRecord, UsageRecord, UsageStore
@@ -57,6 +58,7 @@ async def _parse_chunk(
     chunk_index: int,
     text: str,
     sem: asyncio.Semaphore,
+    llm_provider: str,
 ) -> tuple[Optional[ParseJobResultItem], Optional[ParseJobErrorItem], int, int]:
     """Parse one JD chunk with a per-call BAML Collector.
 
@@ -70,7 +72,7 @@ async def _parse_chunk(
         try:
             baml_job = await b.ParseSingleJob(
                 text=text,
-                baml_options={"collector": collector},
+                baml_options={"client": llm_provider, "collector": collector},
             )
             in_tok, out_tok = _collector_tokens(collector)
             return (
@@ -103,6 +105,7 @@ async def _parse_bundle_fallback(
     *,
     filename: str,
     text: str,
+    llm_provider: str,
 ) -> tuple[List[ParseJobResultItem], List[ParseJobErrorItem], int, int]:
     """Single LLM call that returns a list of jobs — used when no `招聘单位`
     header is found.
@@ -117,7 +120,7 @@ async def _parse_bundle_fallback(
     try:
         baml_jobs = await b.ParseJobDescriptions(
             text=text,
-            baml_options={"collector": collector},
+            baml_options={"client": llm_provider, "collector": collector},
         )
         in_tok, out_tok = _collector_tokens(collector)
         parsed = [
@@ -209,12 +212,13 @@ async def parse_endpoint(
         )
 
     sem = asyncio.Semaphore(PARSE_CONCURRENCY)
+    llm_provider = resolve_llm_provider()
     chunk_results = asyncio.gather(
-        *[_parse_chunk(filename=fn, chunk_index=ci, text=t, sem=sem)
+        *[_parse_chunk(filename=fn, chunk_index=ci, text=t, sem=sem, llm_provider=llm_provider)
           for fn, ci, t in chunked]
     )
     fallback_results = asyncio.gather(
-        *[_parse_bundle_fallback(filename=fn, text=t) for fn, t in fallback_files]
+        *[_parse_bundle_fallback(filename=fn, text=t, llm_provider=llm_provider) for fn, t in fallback_files]
     )
     chunk_out, fallback_out = await asyncio.gather(chunk_results, fallback_results)
 

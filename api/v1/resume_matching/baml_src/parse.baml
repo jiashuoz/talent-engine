@@ -9,11 +9,13 @@
 // ParseJobDescriptions (list-output) remains as a last-resort fallback
 // for inputs where no 招聘单位 header is found (unexpected format).
 
-function ParseResume(resume_pdf: pdf) -> Resume {
-  client Gemini
+function ParseResume(text: string) -> Resume {
+  client Default
   prompt #"
-    You are parsing a Chinese job-seeker resume. Extract the fields defined
-    by the Resume schema. Rules:
+    You are parsing a Chinese job-seeker resume. The input is plain text
+    extracted from a PDF — formatting and layout cues may be lost, so
+    rely on field labels and ordering. Extract the fields defined by
+    the Resume schema. Rules:
 
     - Dates: keep the candidate's original format (e.g. "2022.9-2026.6").
     - Age: if the resume states an age directly, fill `age`; otherwise fill
@@ -25,21 +27,22 @@ function ParseResume(resume_pdf: pdf) -> Resume {
     - certifications: certificates, awards, and licenses. Keep the original
       Chinese phrasing (e.g. "护士执业资格证", "C1驾照", "普通话二级甲等").
     - skills: tools/tech/soft skills that aren't certificates.
-    - raw_text: the full textual content you read from the PDF, newline
-      separated, preserving reading order. The matcher uses this to quote
-      specific details that didn't fit the structured schema.
+    - raw_text: the input text, unchanged. This is our verification that
+      the model saw the whole resume.
     - If a field is not stated in the resume, leave it null or empty. Do
       not guess. Do not translate Chinese to English.
 
     {{ ctx.output_format }}
 
-    PDF:
-    {{ resume_pdf }}
+    Resume:
+    ```
+    {{ text }}
+    ```
   "#
 }
 
 function ParseSingleJob(text: string) -> Job {
-  client Gemini
+  client Default
   prompt #"
     You are parsing ONE Chinese job description. The input contains exactly
     one job posting. Extract the fields defined by the Job schema.
@@ -86,7 +89,7 @@ function ParseSingleJob(text: string) -> Job {
 // produces obviously bad output (invalid offsets, nothing detected but
 // input non-empty, etc). Kept so pipeline has a degraded-but-working path.
 function ParseJobDescriptions(text: string) -> Job[] {
-  client Gemini
+  client Default
   prompt #"
     You are parsing a Chinese job-description document that may contain one
     or more jobs. Return one Job entry per job. Follow the same field rules

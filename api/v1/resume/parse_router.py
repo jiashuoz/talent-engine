@@ -16,7 +16,6 @@ If parse latency or batch size ever grows past that, mirror the async
 from __future__ import annotations
 
 import asyncio
-import base64
 import logging
 import time
 from typing import List, Optional
@@ -26,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from v1.resume_matching.auth import require_api_key
 from v1.resume_matching.baml_client.async_client import b
+from v1.resume_matching.llm_config import resolve_llm_provider
 from v1.resume_matching.pipeline import _collector_tokens
 from v1.resume_matching.public_schema import from_baml_resume
 from v1.resume_matching.storage import ApiKeyRecord, UsageRecord, UsageStore
@@ -35,6 +35,7 @@ from v1.resume.parse_schema import (
     ParseResultItem,
     ParseStats,
 )
+from v1.resume.pdf_text import PdfExtractionError, extract_pdf_text
 from v1.routers.deps import get_engine
 
 logger = logging.getLogger(__name__)
@@ -55,21 +56,42 @@ async def _parse_one(
     filename: str,
     pdf_bytes: bytes,
     sem: asyncio.Semaphore,
+    llm_provider: str,
 ) -> tuple[Optional[ParseResultItem], Optional[ParseErrorItem], int, int]:
     """Parse one PDF with a per-call BAML Collector for token tracking.
+
+    The PDF is converted to plain text in-process via `extract_pdf_text`
+    and the result is sent to the configured LLM provider as a `text`
+    input. This keeps a single code path across Gemini, Qwen, Hunyuan,
+    and DeepSeek — the cost is losing Gemini's vision/layout-aware PDF
+    parsing (acceptable for digital PDFs; scanned PDFs surface as
+    PdfExtractionError before we ever hit the LLM).
 
     Returns (success_item, error_item, input_tokens, output_tokens). Exactly
     one of the first two is non-None.
     """
-    from baml_py import Collector, Pdf
+    from baml_py import Collector
 
     collector = Collector(name="resume-parse")
     async with sem:
         try:
-            pdf = Pdf.from_base64(base64.b64encode(pdf_bytes).decode("ascii"))
+            text = extract_pdf_text(pdf_bytes)
+        except PdfExtractionError as e:
+            return (
+                None,
+                ParseErrorItem(
+                    resume_id=resume_id,
+                    filename=filename,
+                    error=f"PdfExtractionError: {e}",
+                ),
+                0,
+                0,
+            )
+
+        try:
             baml_resume = await b.ParseResume(
-                resume_pdf=pdf,
-                baml_options={"collector": collector},
+                text=text,
+                baml_options={"client": llm_provider, "collector": collector},
             )
             in_tok, out_tok = _collector_tokens(collector)
             return (
@@ -143,8 +165,9 @@ async def parse_endpoint(
         files.append((rid, upload.filename or f"resume_{i}", data))
 
     sem = asyncio.Semaphore(PARSE_CONCURRENCY)
+    llm_provider = resolve_llm_provider()
     results = await asyncio.gather(
-        *[_parse_one(resume_id=rid, filename=fn, pdf_bytes=pb, sem=sem)
+        *[_parse_one(resume_id=rid, filename=fn, pdf_bytes=pb, sem=sem, llm_provider=llm_provider)
           for rid, fn, pb in files]
     )
 

@@ -99,19 +99,24 @@ class BamlStub:
             "ParseResume": [], "ParseSingleJob": [], "ScoreMatch": [],
         }
 
-    async def ParseResume(self, *, resume_pdf) -> Resume:  # noqa: N802 — BAML naming
+    async def ParseResume(self, *, text: str = "", resume_pdf=None, baml_options=None) -> Resume:  # noqa: N802 — BAML naming
         self.calls["ParseResume"] += 1
         self.starts["ParseResume"].append(time.perf_counter())
-        # resume_pdf is a baml_py.Pdf — we tag behaviour off the bytes length
-        # by keeping a side map the test populates.
-        fname = getattr(resume_pdf, "_test_filename", "unknown")
+        # Tagging works whether the caller passes `text` (production path) or
+        # `resume_pdf` (test fixture's tagged_parse — uses an object that
+        # carries `_test_filename`).
+        fname = (
+            getattr(resume_pdf, "_test_filename", None)
+            if resume_pdf is not None
+            else (text or "unknown")
+        )
         if fname in self.resume_errors:
             await asyncio.sleep(self.resume_latency)
             raise self.resume_errors[fname]
         await asyncio.sleep(self.resume_latency)
         return _fake_resume(fname)
 
-    async def ParseSingleJob(self, *, text: str) -> Job:  # noqa: N802
+    async def ParseSingleJob(self, *, text: str, baml_options=None) -> Job:  # noqa: N802
         self.calls["ParseSingleJob"] += 1
         self.starts["ParseSingleJob"].append(time.perf_counter())
         await asyncio.sleep(self.jd_latency)
@@ -121,7 +126,7 @@ class BamlStub:
         position = lines[1].split("：", 1)[-1] if len(lines) > 1 else "?"
         return _fake_job(company=company, position=position, raw=text)
 
-    async def ParseJobDescriptions(self, *, text: str) -> List[Job]:  # noqa: N802
+    async def ParseJobDescriptions(self, *, text: str, baml_options=None) -> List[Job]:  # noqa: N802
         # Fallback path — only exercised if the regex splitter returns nothing.
         self.calls["ParseJobDescriptions"] += 1
         await asyncio.sleep(self.jd_latency)
