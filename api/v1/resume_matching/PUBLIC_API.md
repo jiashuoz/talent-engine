@@ -1,16 +1,18 @@
 # talent-engine — Public API
 
-Two surfaces, both authenticated with the same `X-API-Key`:
+Three surfaces, all authenticated with the same `X-API-Key`:
 
-- **`POST /v1/resume/parse`** — turn resume PDFs into structured JSON.
+- **`POST /v1/resume/parse`** — turn resume PDFs into structured `Resume` JSON.
+- **`POST /v1/job/parse`** — turn JD `.txt` files (single or `招聘单位`-bundled) into structured `Job` JSON.
 - **`POST /v1/resume-matching/match`** + async variants — score parsed resumes against parsed job postings.
 
 Typical flow from a WeChat mini program:
 
 1. Send the user's PDF(s) to `/v1/resume/parse` → get back `Resume` JSON.
-2. Pass that JSON straight into `/v1/resume-matching/match` (or `/match/async`) as `resumes[].resume`.
+2. Send the JD text(s) to `/v1/job/parse` → get back `Job` JSON.
+3. Pass both straight into `/v1/resume-matching/match` (or `/match/async`).
 
-No transformation between calls — the parse output schema and the match input schema are the same `Resume` shape.
+No transformation between calls — the parse outputs and the match inputs share the same `Resume` / `Job` shapes.
 
 - **Base URL**: `https://api.mnexa.ai`
 - **Auth**: `X-API-Key` header on every request
@@ -85,6 +87,66 @@ Per-file failures (corrupt PDF, BAML extraction error) appear in `errors[]` with
 **Status codes**: `200` (with possible `errors[]`); `400` on validation; `401` on auth; `413` on size/count; `500` on full-pipeline failure.
 
 Sync only. A typical batch (≤ 20 PDFs) parses in 10–30 s and fits comfortably under WeChat's default 60 s timeout.
+
+---
+
+### `POST /v1/job/parse` — JD text → JSON
+
+Parse JD `.txt` files into the structured `Job` shape consumed by `/match`. Each file may contain a single JD or a bundle separated by `招聘单位` headers; the server splits before extraction so each chunk gets a focused LLM call.
+
+```bash
+curl -X POST https://api.mnexa.ai/v1/job/parse \
+  -H "X-API-Key: $KEY" \
+  -F "jds=@招聘公告-A.txt" \
+  -F "jds=@招聘公告-B.txt"
+```
+
+| Form field | Type | Notes |
+|---|---|---|
+| `jds` | file (one or more) | UTF-8 `.txt` files. Up to 10 per request, 200 KB each. Combined chunks capped at 100 per request. |
+
+**Response (`200 OK`)**:
+
+```jsonc
+{
+  "status": "completed",
+  "parsed": [
+    {
+      "job_id": "招聘公告-A.txt#0",     // synthesized as `{filename}#{chunk_index}`
+      "filename": "招聘公告-A.txt",
+      "chunk_index": 0,
+      "job": { /* full Job — same shape as the /match input */ }
+    },
+    {
+      "job_id": "招聘公告-A.txt#1",
+      "filename": "招聘公告-A.txt",
+      "chunk_index": 1,
+      "job": { ... }
+    }
+  ],
+  "errors": [
+    { "filename": "招聘公告-B.txt", "chunk_index": 2, "error": "ParseSingleJob failed: ..." }
+  ],
+  "stats": {
+    "files_received": 2,
+    "chunks_detected": 5,
+    "jobs_parsed": 4,
+    "jobs_failed": 1,
+    "elapsed_ms": 9100,
+    "input_tokens": 6240,
+    "output_tokens": 1480
+  }
+}
+```
+
+**Splitting behavior:**
+
+- Files containing `招聘单位` headers are split on each header and parsed in parallel via `ParseSingleJob`. Per-chunk failures land in `errors[]` without sinking the rest.
+- Files with no `招聘单位` header fall back to a single `ParseJobDescriptions` list call. Per-chunk error granularity isn't available on this path — failures show up as one file-level error.
+
+**Status codes**: `200` (with possible `errors[]`); `400` on validation or non-UTF-8; `401` on auth; `413` on size, file count, or chunk count caps; `500` on full-pipeline failure.
+
+Sync only.
 
 ---
 
