@@ -6,7 +6,7 @@ What it does:
      client-side, except here we run it server-side for convenience — the
      point is to produce realistic structured PublicResume/PublicJob input).
   3. Spins up the FastAPI app in-process and POSTs the parsed payload to
-     /v1/resume-matching/api/match with an X-API-Key header. This exercises
+     /v1/resume-matching/match with an X-API-Key header. This exercises
      auth, validation, routing, dependency injection, and the score_pairs
      pipeline — same code paths as a deployed server.
   4. Writes a markdown report under scripts/out/.
@@ -315,21 +315,21 @@ async def main() -> int:
 
     headers = {"X-API-Key": api_key}
 
-    print(f"\nPOST {args.mode} -> {args.base_url or '<in-process>'}/v1/resume-matching/api/match"
+    print(f"\nPOST {args.mode} -> {args.base_url or '<in-process>'}/v1/resume-matching/match"
           f"  ({len(resume_items)}×{len(job_items)} = {len(resume_items)*len(job_items)} pairs)")
 
     t0 = time.perf_counter()
     async with client:
         if args.mode == "sync":
             resp = await client.post(
-                "/v1/resume-matching/api/match",
+                "/v1/resume-matching/match",
                 json=request.model_dump(), headers=headers,
             )
             resp.raise_for_status()
             response_data = resp.json()
         else:
             resp = await client.post(
-                "/v1/resume-matching/api/match/async",
+                "/v1/resume-matching/match/async",
                 json=request.model_dump(), headers=headers,
             )
             resp.raise_for_status()
@@ -338,7 +338,7 @@ async def main() -> int:
             while True:
                 await asyncio.sleep(2.0)
                 poll = await client.get(
-                    f"/v1/resume-matching/api/match/{job_id}", headers=headers,
+                    f"/v1/resume-matching/match/{job_id}", headers=headers,
                 )
                 poll.raise_for_status()
                 response_data = poll.json()

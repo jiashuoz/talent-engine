@@ -44,8 +44,8 @@ async def health() -> dict:
     return {"status": "ok"}
 
 
-from v1.resume_matching.router import router as resume_matching_router
 from v1.resume_matching.public_router import router as resume_matching_public_router
+from v1.resume.parse_router import router as resume_parse_router
 
-app.include_router(resume_matching_router)
 app.include_router(resume_matching_public_router)
+app.include_router(resume_parse_router)

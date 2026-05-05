@@ -1,12 +1,20 @@
-# Resume Matching — Public API
+# talent-engine — Public API
 
-Public JSON API for matching parsed resumes against parsed job postings.
-Designed for the WeChat mini program (parsing happens client-side; this
-service does scoring only).
+Two surfaces, both authenticated with the same `X-API-Key`:
 
-- **Base URL**: `https://api.mnexa.ai/v1/resume-matching/api`
+- **`POST /v1/resume/parse`** — turn resume PDFs into structured JSON.
+- **`POST /v1/resume-matching/match`** + async variants — score parsed resumes against parsed job postings.
+
+Typical flow from a WeChat mini program:
+
+1. Send the user's PDF(s) to `/v1/resume/parse` → get back `Resume` JSON.
+2. Pass that JSON straight into `/v1/resume-matching/match` (or `/match/async`) as `resumes[].resume`.
+
+No transformation between calls — the parse output schema and the match input schema are the same `Resume` shape.
+
+- **Base URL**: `https://api.mnexa.ai`
 - **Auth**: `X-API-Key` header on every request
-- **Content type**: `application/json` (UTF-8 — Chinese text preserved verbatim)
+- **Content type**: `application/json` (UTF-8 — Chinese text preserved verbatim) for the match API; `multipart/form-data` for the parse API
 
 Interactive schema browser: <https://api.mnexa.ai/docs> (search for `resume-matching-api`).
 
@@ -28,7 +36,59 @@ embed it in mini-program client code.
 
 ## Endpoints
 
-### `POST /match` — synchronous
+### `POST /v1/resume/parse` — PDF → JSON
+
+Parse one or more resume PDFs into the structured `Resume` shape consumed by `/match`.
+
+```bash
+curl -X POST https://api.mnexa.ai/v1/resume/parse \
+  -H "X-API-Key: $KEY" \
+  -F "resumes=@张三.pdf" \
+  -F "resumes=@李四.pdf" \
+  -F "resume_ids=r_001" \
+  -F "resume_ids=r_002"
+```
+
+| Form field | Type | Notes |
+|---|---|---|
+| `resumes` | file (one or more) | Resume PDFs. Up to 20 per request, 5 MB each. |
+| `resume_ids` | string (one per file, optional) | Client-supplied ids in file order. If omitted, `resume_id` defaults to the upload filename. |
+
+**Response (`200 OK`)**:
+
+```jsonc
+{
+  "status": "completed",
+  "parsed": [
+    {
+      "resume_id": "r_001",
+      "filename": "张三.pdf",
+      "resume": { /* full Resume — same shape as the /match input */ }
+    }
+  ],
+  "errors": [
+    { "resume_id": "r_002", "filename": "broken.pdf", "error": "ParseResume failed: ..." }
+  ],
+  "stats": {
+    "files_received": 2,
+    "parsed_ok": 1,
+    "parsed_failed": 1,
+    "elapsed_ms": 8420,
+    "input_tokens": 4180,
+    "output_tokens": 920
+  }
+}
+```
+
+Per-file failures (corrupt PDF, BAML extraction error) appear in `errors[]` with status `200`. Only request-level failures (auth, validation, size cap) return 4xx.
+
+**Status codes**: `200` (with possible `errors[]`); `400` on validation; `401` on auth; `413` on size/count; `500` on full-pipeline failure.
+
+Sync only. A typical batch (≤ 20 PDFs) parses in 10–30 s and fits comfortably under WeChat's default 60 s timeout.
+
+---
+
+### `POST /v1/resume-matching/match` — synchronous match
 
 Score every (resume × job) pair and return results inline.
 
@@ -36,7 +96,7 @@ Use for small batches that fit in WeChat's request timeout (~60 s default).
 For larger batches, use the async variant below.
 
 ```bash
-curl -X POST https://api.mnexa.ai/v1/resume-matching/api/match \
+curl -X POST https://api.mnexa.ai/v1/resume-matching/match \
   -H "X-API-Key: $KEY" \
   -H "Content-Type: application/json" \
   -d @request.json
@@ -48,13 +108,13 @@ body); `400`/`413` on validation/size errors; `401` on auth failure;
 
 ---
 
-### `POST /match/async` — accept and queue
+### `POST /v1/resume-matching/match/async` — accept and queue
 
 Returns immediately with a `job_id` to poll. The match runs as a
 background task on the server.
 
 ```bash
-curl -X POST https://api.mnexa.ai/v1/resume-matching/api/match/async \
+curl -X POST https://api.mnexa.ai/v1/resume-matching/match/async \
   -H "X-API-Key: $KEY" \
   -H "Content-Type: application/json" \
   -d @request.json
@@ -70,12 +130,12 @@ any case where you can tolerate polling.
 
 ---
 
-### `GET /match/{job_id}` — poll
+### `GET /v1/resume-matching/match/{job_id}` — poll
 
 Returns the current state of an async job. Poll at 1–2 second intervals.
 
 ```bash
-curl https://api.mnexa.ai/v1/resume-matching/api/match/$JOB_ID \
+curl https://api.mnexa.ai/v1/resume-matching/match/$JOB_ID \
   -H "X-API-Key: $KEY"
 ```
 

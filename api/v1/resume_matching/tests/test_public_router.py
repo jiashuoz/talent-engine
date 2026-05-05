@@ -171,7 +171,7 @@ async def test_sync_match_returns_all_pairs(client, api_key, baml) -> None:
         ("李四", "A公司"): 70, ("李四", "B公司"): 80,
     }
     resp = await client.post(
-        "/v1/resume-matching/api/match",
+        "/v1/resume-matching/match",
         json=body, headers={"X-API-Key": api_key},
     )
     assert resp.status_code == 200
@@ -200,7 +200,7 @@ async def test_sync_match_surfaces_per_pair_errors_alongside_successes(
         jobs=[("j1", "A公司", "P"), ("j2", "B公司", "P")],
     )
     resp = await client.post(
-        "/v1/resume-matching/api/match",
+        "/v1/resume-matching/match",
         json=body, headers={"X-API-Key": api_key},
     )
     assert resp.status_code == 200
@@ -222,7 +222,7 @@ async def test_sync_match_surfaces_per_pair_errors_alongside_successes(
 @pytest.mark.asyncio
 async def test_sync_match_rejects_empty_resumes(client, api_key, baml) -> None:
     resp = await client.post(
-        "/v1/resume-matching/api/match",
+        "/v1/resume-matching/match",
         json={"resumes": [], "jobs": [{"job_id": "j", "job": {"company": "A", "position": "P"}}]},
         headers={"X-API-Key": api_key},
     )
@@ -238,7 +238,7 @@ async def test_sync_match_rejects_duplicate_ids(client, api_key, baml) -> None:
         jobs=[("j1", "A", "P")],
     )
     resp = await client.post(
-        "/v1/resume-matching/api/match",
+        "/v1/resume-matching/match",
         json=body, headers={"X-API-Key": api_key},
     )
     assert resp.status_code == 400
@@ -255,7 +255,7 @@ async def test_sync_match_caps_pair_count(client, api_key, baml, monkeypatch) ->
         jobs=[("j1", "X", "P"), ("j2", "Y", "P")],
     )
     resp = await client.post(
-        "/v1/resume-matching/api/match",
+        "/v1/resume-matching/match",
         json=body, headers={"X-API-Key": api_key},
     )
     assert resp.status_code == 413
@@ -271,7 +271,7 @@ async def test_match_rejects_missing_api_key(client, baml) -> None:
     body = _request(
         resumes=[("r1", "a")], jobs=[("j1", "X", "P")],
     )
-    resp = await client.post("/v1/resume-matching/api/match", json=body)
+    resp = await client.post("/v1/resume-matching/match", json=body)
     assert resp.status_code == 401
     assert "Missing" in resp.json()["detail"]
 
@@ -282,7 +282,7 @@ async def test_match_rejects_invalid_api_key(client, baml) -> None:
         resumes=[("r1", "a")], jobs=[("j1", "X", "P")],
     )
     resp = await client.post(
-        "/v1/resume-matching/api/match",
+        "/v1/resume-matching/match",
         json=body, headers={"X-API-Key": "mnk_not-a-real-key"},
     )
     assert resp.status_code == 401
@@ -302,7 +302,7 @@ async def test_sync_match_logs_usage_row_with_api_key_id(
         jobs=[("j1", "A", "P"), ("j2", "B", "P")],
     )
     resp = await client.post(
-        "/v1/resume-matching/api/match",
+        "/v1/resume-matching/match",
         json=body, headers={"X-API-Key": api_key},
     )
     assert resp.status_code == 200
@@ -346,7 +346,7 @@ async def test_sync_match_aggregates_token_usage_into_usage_row(
         jobs=[("j1", "A", "P"), ("j2", "B", "P")],
     )
     resp = await client.post(
-        "/v1/resume-matching/api/match",
+        "/v1/resume-matching/match",
         json=body, headers={"X-API-Key": api_key},
     )
     assert resp.status_code == 200
@@ -373,7 +373,7 @@ async def test_async_match_returns_job_id_and_eventually_completes(
     baml.score_overrides = {("张三", "A"): 90, ("张三", "B"): 70}
 
     resp = await client.post(
-        "/v1/resume-matching/api/match/async",
+        "/v1/resume-matching/match/async",
         json=body, headers={"X-API-Key": api_key},
     )
     assert resp.status_code == 202
@@ -389,7 +389,7 @@ async def test_async_match_returns_job_id_and_eventually_completes(
     for _ in range(50):
         await asyncio.sleep(0)
         poll = await client.get(
-            f"/v1/resume-matching/api/match/{job_id}",
+            f"/v1/resume-matching/match/{job_id}",
             headers={"X-API-Key": api_key},
         )
         assert poll.status_code == 200
@@ -408,7 +408,7 @@ async def test_async_match_returns_job_id_and_eventually_completes(
 @pytest.mark.asyncio
 async def test_async_poll_returns_404_for_unknown_job(client, api_key) -> None:
     resp = await client.get(
-        "/v1/resume-matching/api/match/rmj_does-not-exist",
+        "/v1/resume-matching/match/rmj_does-not-exist",
         headers={"X-API-Key": api_key},
     )
     assert resp.status_code == 404
@@ -416,5 +416,5 @@ async def test_async_poll_returns_404_for_unknown_job(client, api_key) -> None:
 
 @pytest.mark.asyncio
 async def test_async_poll_requires_api_key(client) -> None:
-    resp = await client.get("/v1/resume-matching/api/match/rmj_anything")
+    resp = await client.get("/v1/resume-matching/match/rmj_anything")
     assert resp.status_code == 401

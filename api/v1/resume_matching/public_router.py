@@ -2,14 +2,13 @@
 
 Three endpoints:
 
-  POST /v1/resume-matching/api/match           — sync, returns full result
-  POST /v1/resume-matching/api/match/async     — kicks off background job
-  GET  /v1/resume-matching/api/match/{job_id}  — poll an async job
+  POST /v1/resume-matching/match           — sync, returns full result
+  POST /v1/resume-matching/match/async     — kicks off background job
+  GET  /v1/resume-matching/match/{job_id}  — poll an async job
 
-Auth is via X-API-Key header. Unlike the public demo (`/v1/resume-matching/match`,
-multipart + SSE), this surface is closed by default — keys are minted by
-the operator via `scripts/create_api_key.py`. Every request — successful
-or not — is logged to `v1_resume_matching_usage` for adoption tracking.
+Auth is via X-API-Key header. Keys are minted by the operator via
+`scripts/create_api_key.py`. Every request — successful or not — is
+logged to `v1_resume_matching_usage` for adoption tracking.
 
 Async job storage is intentionally in-memory: the cluster is one process
 today, and we documented that clients must retry on 404. If we ever need
@@ -53,7 +52,7 @@ from v1.resume_matching.storage import ApiKeyRecord, UsageRecord, UsageStore
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/v1/resume-matching/api", tags=["resume-matching-api"])
+router = APIRouter(prefix="/v1/resume-matching", tags=["resume-matching"])
 
 
 # Defensive caps. The pipeline can technically handle more, but anything
