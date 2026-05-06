@@ -1,0 +1,44 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    # Tuned for a 1 GB host. Relax (or remove) when on 2GB+ boxes.
+    command: >
+      postgres
+      -c shared_buffers=96MB
+      -c effective_cache_size=256MB
+      -c work_mem=4MB
+      -c maintenance_work_mem=32MB
+      -c max_connections=20
+    environment:
+      POSTGRES_DB: talent_engine
+      POSTGRES_USER: talent_engine
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U talent_engine -d talent_engine"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: ./api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: 8000
+      DATABASE_URL: postgresql://talent_engine:${POSTGRES_PASSWORD}@db:5432/talent_engine
+      LLM_PROVIDER: ${LLM_PROVIDER}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      QWEN_API_KEY: ${QWEN_API_KEY:-}
+      HUNYUAN_API_KEY: ${HUNYUAN_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+    ports:
+      - "127.0.0.1:8000:8000"
+
+volumes:
+  postgres_data:
