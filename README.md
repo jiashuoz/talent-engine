@@ -28,7 +28,7 @@ api/
       baml_client/             # GENERATED — run `baml-cli generate`
       storage/                 # api_keys + usage tables (own MetaData)
       tests/                   # pytest, sqlite in-memory
-      scripts/                 # operator CLI (create_api_key, demo, smoke test)
+      scripts/                 # operator CLI (manage_api_keys, demo, smoke test)
   requirements.txt
   requirements-dev.txt
   pyproject.toml
@@ -77,6 +77,29 @@ The `LLM_PROVIDER` env var picks which client BAML routes through at runtime —
 Wired through `baml_options={"client": LLM_PROVIDER}` at every BAML call site — see [llm_config.py](api/v1/resume_matching/llm_config.py) and [main.baml](api/v1/resume_matching/baml_src/main.baml). Unknown values fail loud at first request.
 
 Only set the API key for the active provider — leaving the others unset is fine. If you're switching providers mid-flight, re-run your eval set: structured-extraction quality varies meaningfully across models, and the prompts in `baml_src/` were originally tuned against Gemini.
+
+## Managing API keys
+
+`manage_api_keys` is the one-stop operator CLI. Run inside the API container
+(or any environment where `DATABASE_URL` is set):
+
+```bash
+python -m v1.resume_matching.scripts.manage_api_keys create <partner-name>
+python -m v1.resume_matching.scripts.manage_api_keys list
+python -m v1.resume_matching.scripts.manage_api_keys revoke <id-or-name>
+python -m v1.resume_matching.scripts.manage_api_keys rotate <partner-name>
+```
+
+- `create` — mints a key; plaintext is shown once, only the SHA-256 hash is
+  persisted.
+- `list` — every key (active + revoked) with id, name, prefix, status.
+- `revoke` — by numeric id (single key) or by partner name (every active
+  key for that partner).
+- `rotate` — revoke all active keys for the partner and mint a fresh one
+  in one shot. Use when a key has leaked.
+
+The older `create_api_key` script is still wired for backwards compatibility
+but `manage_api_keys` is the recommended entry point.
 
 ## China deployment
 

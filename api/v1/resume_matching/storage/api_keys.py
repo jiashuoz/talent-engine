@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional, Tuple
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from v1.resume_matching.storage.schema import v1_resume_matching_api_keys
@@ -118,3 +118,57 @@ class ApiKeyStore:
         if not record.is_active:
             return None
         return record
+
+    async def list_all(self) -> list[ApiKeyRecord]:
+        """Return every key in the table (active + revoked), oldest first.
+
+        Used by the operator CLI to audit keys. Includes revoked rows so
+        the partner-name → ID history is visible after rotation.
+        """
+        async with self._engine.connect() as conn:
+            result = await conn.execute(
+                select(v1_resume_matching_api_keys).order_by(
+                    v1_resume_matching_api_keys.c.id
+                )
+            )
+            rows = result.fetchall()
+        return [
+            ApiKeyRecord(
+                id=r.id, name=r.name, key_prefix=r.key_prefix,
+                created_at=r.created_at, revoked_at=r.revoked_at,
+            )
+            for r in rows
+        ]
+
+    async def revoke_by_id(self, key_id: int) -> bool:
+        """Mark a key as revoked. Returns True if a row was updated.
+
+        Idempotent: revoking an already-revoked key is a no-op (we don't
+        bump revoked_at). Operator sees a False return as "id not found
+        or already revoked".
+        """
+        from datetime import datetime, timezone
+        async with self._engine.begin() as conn:
+            result = await conn.execute(
+                update(v1_resume_matching_api_keys)
+                .where(v1_resume_matching_api_keys.c.id == key_id)
+                .where(v1_resume_matching_api_keys.c.revoked_at.is_(None))
+                .values(revoked_at=datetime.now(timezone.utc))
+            )
+            return result.rowcount > 0
+
+    async def revoke_by_name(self, name: str) -> int:
+        """Revoke every active key with this `name`. Returns count revoked.
+
+        A partner may have multiple historical keys (after rotations); this
+        marks every still-active one. Returns 0 if no active rows match.
+        """
+        from datetime import datetime, timezone
+        async with self._engine.begin() as conn:
+            result = await conn.execute(
+                update(v1_resume_matching_api_keys)
+                .where(v1_resume_matching_api_keys.c.name == name)
+                .where(v1_resume_matching_api_keys.c.revoked_at.is_(None))
+                .values(revoked_at=datetime.now(timezone.utc))
+            )
+            return result.rowcount

@@ -82,13 +82,69 @@ async def test_lookup_returns_none_for_malformed_input(engine) -> None:
 async def test_lookup_returns_none_for_revoked_key(engine) -> None:
     store = ApiKeyStore(engine)
     plaintext, record = await store.create(name="to-revoke")
-    # Mark revoked directly — there's no public revoke() yet (operator
-    # can do it via SQL); we just need to confirm the lookup honours it.
-    from sqlalchemy import update
-    async with engine.begin() as conn:
-        await conn.execute(
-            update(v1_resume_matching_api_keys)
-            .where(v1_resume_matching_api_keys.c.id == record.id)
-            .values(revoked_at=datetime.now(timezone.utc))
-        )
+    # Mark revoked via the public method; lookup must honour it.
+    revoked = await store.revoke_by_id(record.id)
+    assert revoked is True
     assert await store.lookup(plaintext) is None
+
+
+@pytest.mark.asyncio
+async def test_list_all_returns_every_key_ordered_by_id(engine) -> None:
+    store = ApiKeyStore(engine)
+    _, a = await store.create(name="alpha")
+    _, b = await store.create(name="bravo")
+    _, c = await store.create(name="charlie")
+    rows = await store.list_all()
+    assert [r.name for r in rows] == ["alpha", "bravo", "charlie"]
+    assert [r.id for r in rows] == [a.id, b.id, c.id]
+
+
+@pytest.mark.asyncio
+async def test_list_all_includes_revoked_rows(engine) -> None:
+    store = ApiKeyStore(engine)
+    _, active = await store.create(name="still-active")
+    _, doomed = await store.create(name="will-revoke")
+    await store.revoke_by_id(doomed.id)
+    rows = await store.list_all()
+    assert len(rows) == 2
+    # Revoked row still listed — operator needs to see history.
+    revoked_row = next(r for r in rows if r.id == doomed.id)
+    assert revoked_row.is_active is False
+    assert revoked_row.revoked_at is not None
+
+
+@pytest.mark.asyncio
+async def test_revoke_by_id_returns_false_for_unknown_id(engine) -> None:
+    store = ApiKeyStore(engine)
+    assert await store.revoke_by_id(99999) is False
+
+
+@pytest.mark.asyncio
+async def test_revoke_by_id_is_idempotent(engine) -> None:
+    store = ApiKeyStore(engine)
+    _, record = await store.create(name="rev-twice")
+    assert await store.revoke_by_id(record.id) is True
+    # Second call: row exists but is already revoked → no update happens.
+    assert await store.revoke_by_id(record.id) is False
+
+
+@pytest.mark.asyncio
+async def test_revoke_by_name_marks_all_active_keys_with_that_name(engine) -> None:
+    store = ApiKeyStore(engine)
+    # Two active keys under the same partner name (operator rotated without revoking the old one).
+    _, k1 = await store.create(name="partner-A")
+    _, k2 = await store.create(name="partner-A")
+    _, other = await store.create(name="partner-B")
+    count = await store.revoke_by_name("partner-A")
+    assert count == 2
+    rows = {r.id: r for r in await store.list_all()}
+    assert rows[k1.id].is_active is False
+    assert rows[k2.id].is_active is False
+    assert rows[other.id].is_active is True
+
+
+@pytest.mark.asyncio
+async def test_revoke_by_name_returns_zero_when_no_match(engine) -> None:
+    store = ApiKeyStore(engine)
+    await store.create(name="exists")
+    assert await store.revoke_by_name("never-existed") == 0
