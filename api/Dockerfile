@@ -7,11 +7,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-# Aliyun's PyPI mirror is fast from mainland China and acts as a transparent
-# pypi.org proxy elsewhere, so this is safe to keep as the default.
+# Default index is Aliyun (fast inside mainland CN). For builds outside CN —
+# local Mac/Linux dev, GitHub Actions — pass `--build-arg PIP_INDEX_URL=https://pypi.org/simple/`
+# (or set PIP_INDEX_URL in the build env) to avoid the slow cross-firewall fetch.
+ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 RUN pip install --no-cache-dir \
-    --index-url https://mirrors.aliyun.com/pypi/simple/ \
+    --index-url ${PIP_INDEX_URL} \
     --trusted-host mirrors.aliyun.com \
+    --trusted-host pypi.org \
+    --trusted-host files.pythonhosted.org \
     -r requirements.txt
 
 COPY . .

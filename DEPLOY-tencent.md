@@ -20,11 +20,11 @@ Mini-program `wx.request` calls into Tencent-hosted backends are **routed intern
    - Pick a region — `广州 (ap-guangzhou)` for nearest mainland latency.
    - Choose a billing plan. For low traffic, the basic 包年包月 (≈ ¥30/mo) is enough; switch to 按量计费 if you expect spiky load.
 
-2. **Create a Postgres instance.** Tencent's offering is **TencentDB for PostgreSQL** (云数据库 PostgreSQL).
-   - Same region as Cloud Hosting (`ap-guangzhou`).
-   - Smallest tier (1 CPU / 2 GB) is plenty for this workload.
-   - Enable VPC peering so Cloud Hosting can reach it on a private IP.
-   - Note the connection string — looks like `postgresql://user:pass@10.x.x.x:5432/talent_engine`.
+2. **Create a MySQL instance.** Two options:
+   - **微信云托管 内置 MySQL**: simplest — provisioned from the same console (左侧栏 → MySQL), billed alongside the service, auto-wired to your VPC. Recommended for the partner-MVP scale.
+   - **TencentDB for MySQL** (云数据库 MySQL): standalone managed MySQL if you want it independent of the 云托管 environment lifecycle. Same region as Cloud Hosting (`ap-guangzhou`), smallest tier (1 CPU / 2 GB), enable VPC peering so Cloud Hosting can reach it on a private IP.
+
+   Either way, you end up with a connection string like `mysql://user:pass@10.x.x.x:3306/talent_engine`.
 
 3. **Get LLM API keys.**
    - **Qwen (DashScope)**: visit `dashscope.console.aliyun.com` → 创建API-KEY. Note: DashScope is Aliyun, *not* Tencent — it's the same key whether you host on Tencent or anywhere else.
@@ -42,7 +42,7 @@ Cloud Hosting deploys directly from a git repo, building the `Dockerfile` in you
 1. Tencent Cloud console → 云托管 → 服务管理 → 新建服务.
 2. Service name: `talent-engine-api`.
 3. Code source: GitHub. Authorize Tencent's GitHub app to access `jiashuoz/talent-engine`.
-4. Branch: `main`. Build context: `api/` (this is where the Dockerfile lives).
+4. Branch: `main`. **Build context: `api/`** (Dockerfile and [.dockerignore](api/.dockerignore) live there; the latter excludes `.venv`, `baml_client/`, tests, and local PDFs from the build upload). Dockerfile path: `api/Dockerfile`.
 5. **Service config:**
    - Listen port: `80` (Cloud Hosting routes external traffic to whatever port your container listens on; the Dockerfile reads `$PORT`).
    - Min replicas: `1` (avoid cold starts on partner traffic).
@@ -51,7 +51,7 @@ Cloud Hosting deploys directly from a git repo, building the `Dockerfile` in you
 6. **Env vars** (under 环境变量):
    ```
    PORT=80
-   DATABASE_URL=postgresql://<user>:<pass>@<tencentdb-private-ip>:5432/talent_engine
+   DATABASE_URL=mysql://<user>:<pass>@<mysql-private-ip>:3306/talent_engine
    LLM_PROVIDER=Qwen          # or Hunyuan / DeepSeek
    QWEN_API_KEY=sk-...        # only the active provider's key is required
    ```
@@ -111,7 +111,7 @@ For a more operator-friendly view, mirror logs to 日志服务 CLS — adds sear
 
 For low traffic (< 1k requests/day):
 - Cloud Hosting: ~¥30–80 / month (1 instance, 1 GB).
-- TencentDB Postgres: ~¥120 / month (smallest tier, 1 CPU / 2 GB).
+- 微信云托管 内置 MySQL (1 CPU / 1 GB): ~¥60–80 / month. TencentDB MySQL standalone: ~¥100–140 / month (smallest tier).
 - LLM tokens (Qwen / DeepSeek): scales with usage; ~¥0.001–0.005 per resume parse.
 
 ## Operational checklist before going live

@@ -1,8 +1,8 @@
 # Deploying talent-engine on UCloud
 
-This guide covers deploying the API to **UCloud mainland China** at the most basic level: a single **ULightHost** (轻量应用云主机) running both the API and Postgres via `docker compose`. Cheapest, simplest, no managed DB. Right answer for MVP / partner-validation scale (< 1k requests/day).
+This guide covers deploying the API to **UCloud mainland China** at the most basic level: a single **ULightHost** (轻量应用云主机) running both the API and MySQL via `docker compose`. Cheapest, simplest, no managed DB. Right answer for MVP / partner-validation scale (< 1k requests/day).
 
-When you outgrow it, the [Scaling up](#scaling-up) section covers the migration paths (UDB Postgres on a UHost, then UK8S).
+When you outgrow it, the [Scaling up](#scaling-up) section covers the migration paths (UDB MySQL on a UHost, then UK8S).
 
 ## Why ULightHost (and what you give up vs Tencent 云托管)
 
@@ -35,7 +35,7 @@ ULightHost gives you a fixed-price, all-in-one box that runs your Dockerized sta
 
 ## Deployment
 
-The API and Postgres run together on one ULightHost via `docker-compose.yml` (already at repo root).
+The API and MySQL run together on one ULightHost via `docker-compose.yml` (already at repo root).
 
 ### Step 1: Create the ULightHost
 
@@ -43,7 +43,7 @@ UCloud console → 轻量应用云主机 → 创建实例.
 
 - **Region**: from setup above.
 - **Image**: Ubuntu 22.04 LTS.
-- **Spec**: **2 vCPU / 4 GB / 60 GB SSD** (~¥80–100/月). The 4 GB matters because Postgres + FastAPI + BAML's concurrent LLM calls together push past 2 GB under any real load.
+- **Spec**: **2 vCPU / 4 GB / 60 GB SSD** (~¥80–100/月). The 4 GB matters because MySQL + FastAPI + BAML's concurrent LLM calls together push past 2 GB under any real load.
 - **Bandwidth**: 4–5 Mbps bundled (raise via console anytime).
 - **Login**: upload your SSH public key. Skip root password.
 
@@ -85,10 +85,10 @@ nano .env   # edit values below
 ```
 
 In `.env`, set:
-- `POSTGRES_PASSWORD` to a strong random value (e.g. `openssl rand -hex 24`).
+- `MYSQL_PASSWORD` and `MYSQL_ROOT_PASSWORD` to strong random values (e.g. `openssl rand -hex 24` each).
 - `LLM_PROVIDER` to `Qwen` or `DeepSeek`.
 - The matching `<PROVIDER>_API_KEY`.
-- Leave the explicit `DATABASE_URL` commented out — `docker-compose.yml` constructs it from `POSTGRES_PASSWORD` and points at the `db` service.
+- Leave the explicit `DATABASE_URL` commented out — `docker-compose.yml` constructs it from `MYSQL_PASSWORD` and points at the `db` service.
 
 ### Step 6: Start the stack
 
@@ -96,7 +96,7 @@ In `.env`, set:
 docker compose up -d --build
 ```
 
-First run takes ~5–10 min (Docker image build + Postgres init + container start). Subsequent restarts are seconds.
+First run takes ~5–10 min (Docker image build + MySQL init + container start). Subsequent restarts are seconds.
 
 Smoke test from inside the VM:
 ```bash
@@ -153,31 +153,33 @@ git pull
 docker compose up -d --build api    # rebuilds + restarts only the api service
 ```
 
-Postgres data persists across rebuilds via the `postgres_data` named volume. There's brief API downtime (~5–10s) during the restart.
+MySQL data persists across rebuilds via the `mysql_data` named volume. There's brief API downtime (~5–10s) during the restart.
 
 ## Backups
 
-Postgres data lives in the `postgres_data` Docker volume on the VM disk. **You are responsible for backups** — the simplest approach is a nightly `pg_dump` to a local backup directory plus offsite copy to UCloud **UFile** (object storage).
+MySQL data lives in the `mysql_data` Docker volume on the VM disk. **You are responsible for backups** — the simplest approach is a nightly `mysqldump` to a local backup directory plus offsite copy to UCloud **UFile** (object storage).
 
-Daily `pg_dump` cron (run on the VM):
+Daily `mysqldump` cron (run on the VM):
 ```bash
 sudo mkdir -p /var/backups/talent-engine
-sudo tee /etc/cron.daily/pg-backup > /dev/null <<'EOF'
+sudo tee /etc/cron.daily/mysql-backup > /dev/null <<'EOF'
 #!/bin/bash
 set -euo pipefail
 TS=$(date +%Y%m%d-%H%M%S)
 cd /opt/talent-engine
-docker compose exec -T db pg_dump -U talent_engine talent_engine \
+# MYSQL_ROOT_PASSWORD comes from .env loaded by docker compose
+docker compose exec -T db sh -c \
+  'mysqldump -u root -p"$MYSQL_ROOT_PASSWORD" --single-transaction talent_engine' \
   | gzip > /var/backups/talent-engine/dump-$TS.sql.gz
 # retain 14 days
 find /var/backups/talent-engine -name 'dump-*.sql.gz' -mtime +14 -delete
 EOF
-sudo chmod +x /etc/cron.daily/pg-backup
+sudo chmod +x /etc/cron.daily/mysql-backup
 ```
 
 For offsite: install UCloud's `ufile-cli`, push `/var/backups/talent-engine/` to a UFile bucket on the same cron. Worth setting up before you have data you'd be sad to lose.
 
-**This is the biggest operational risk of the on-box-Postgres model.** When it starts feeling fragile, migrate to UDB (see [Scaling up](#scaling-up)).
+**This is the biggest operational risk of the on-box-MySQL model.** When it starts feeling fragile, migrate to UDB (see [Scaling up](#scaling-up)).
 
 ## Mini-program partner integration
 
@@ -207,7 +209,7 @@ The API exposes `/health` (already wired). For a single-VM deploy, the simplest 
 
 ```bash
 docker compose logs -f api      # API stdout/stderr
-docker compose logs -f db       # Postgres logs
+docker compose logs -f db       # MySQL logs
 docker compose ps               # service status
 ```
 
@@ -227,7 +229,7 @@ Stay on this setup until one of these triggers fires; then graduate.
 
 | Trigger | Migration |
 |---|---|
-| Postgres backups feel fragile, or you have data you're afraid to lose | **Move DB to UDB Postgres.** Spin up a UDB instance in the same region, `pg_dump` from the on-box DB, restore into UDB, swap `DATABASE_URL` to point at UDB's private IP, redeploy. The ULightHost stays as-is for the API. |
+| MySQL backups feel fragile, or you have data you're afraid to lose | **Move DB to UDB MySQL.** Spin up a UDB instance in the same region, `mysqldump` from the on-box DB, restore into UDB, swap `DATABASE_URL` to point at UDB's private IP, redeploy. The ULightHost stays as-is for the API. |
 | Sustained CPU > 70% on the VM, or memory pressure | Vertical bump to 4 vCPU / 8 GB ULightHost first; if still tight, move to **UHost** (uncapped tiers, real VPC). |
 | You need autoscaling, blue/green, or multiple services | **UK8S.** Same Docker image, standard k8s manifests, ULB-backed ingress. |
 | You want serverless billing and can tolerate cold starts | UCloud **Cube**. Generally not worth it for a partner-facing API — min-replicas-1 erases the cost benefit. |
@@ -239,11 +241,11 @@ Stay on this setup until one of these triggers fires; then graduate.
 - [ ] DNS A record points at the ULightHost public IP
 - [ ] LLM provider eval against your match-quality benchmark
 - [ ] First API key minted, stored in your password manager
-- [ ] `.env` has strong `POSTGRES_PASSWORD` + correct `LLM_PROVIDER` / API key
+- [ ] `.env` has strong `MYSQL_PASSWORD` + `MYSQL_ROOT_PASSWORD` + correct `LLM_PROVIDER` / API key
 - [ ] `.env` is `chmod 600`
 - [ ] Caddy serving HTTPS, API container bound to `127.0.0.1` only
 - [ ] `restart: unless-stopped` on both compose services
-- [ ] Daily `pg_dump` cron running, backups verified by restoring into a scratch container
+- [ ] Daily `mysqldump` cron running, backups verified by restoring into a scratch container
 - [ ] UMon site monitor on `/health`
 - [ ] SSH key-only auth on the VM (password auth disabled)
 - [ ] Partner onboarding kit prepared (key, docs URL, support contact, **server-domain whitelist instructions**)

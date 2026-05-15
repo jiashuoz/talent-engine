@@ -1,7 +1,7 @@
 """Mint a new public-API key for the resume-matching service.
 
 Operator-only — no UI exposes this. Run from inside the API container or
-any environment where DATABASE_URL points at the right Postgres.
+any environment where DATABASE_URL points at the right MySQL.
 
   $ python -m v1.resume_matching.scripts.create_api_key "wechat-mini-prod"
 

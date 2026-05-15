@@ -1,37 +1,42 @@
 services:
   db:
-    image: postgres:16-alpine
+    image: mysql:8.0
     restart: unless-stopped
-    # Tuned for a 1 GB host. Relax (or remove) when on 2GB+ boxes.
+    # Tuned for a 1 GB host. Bump innodb-buffer-pool-size on 2GB+ boxes.
     command: >
-      postgres
-      -c shared_buffers=96MB
-      -c effective_cache_size=256MB
-      -c work_mem=4MB
-      -c maintenance_work_mem=32MB
-      -c max_connections=20
+      --default-authentication-plugin=caching_sha2_password
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --innodb-buffer-pool-size=128M
+      --max-connections=50
     environment:
-      POSTGRES_DB: talent_engine
-      POSTGRES_USER: talent_engine
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      MYSQL_DATABASE: talent_engine
+      MYSQL_USER: talent_engine
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD in .env}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - mysql_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U talent_engine -d talent_engine"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "talent_engine", "-p${MYSQL_PASSWORD}"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
 
   api:
     image: talent-engine-api:latest
-    build: ./api
+    build:
+      context: ./api
+      args:
+        # Outside mainland China, set PIP_INDEX_URL=https://pypi.org/simple/
+        # in your shell before `docker compose build` to skip the slow Aliyun fetch.
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}
     restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
     environment:
       PORT: 8000
-      DATABASE_URL: postgresql://talent_engine:${POSTGRES_PASSWORD}@db:5432/talent_engine
+      DATABASE_URL: mysql://talent_engine:${MYSQL_PASSWORD}@db:3306/talent_engine
       LLM_PROVIDER: ${LLM_PROVIDER}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       QWEN_API_KEY: ${QWEN_API_KEY:-}
@@ -39,7 +44,9 @@ services:
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
     ports:
-      - "127.0.0.1:8000:8000"
+      # Host port 8002 (8000/8001 are commonly used by mnexa-ai's local stack).
+      # Container listens on 8000 — the in-container PORT.
+      - "127.0.0.1:8002:8000"
 
 volumes:
-  postgres_data:
+  mysql_data:

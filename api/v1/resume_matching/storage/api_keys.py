@@ -12,7 +12,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Tuple
 
 from sqlalchemy import select
@@ -71,20 +71,24 @@ class ApiKeyStore:
         surface it to the operator immediately.
         """
         plaintext, prefix, key_hash = generate_key()
+        # Compute created_at client-side and pass it explicitly. Avoids the
+        # INSERT...RETURNING dance, which Postgres + SQLite support but
+        # aiomysql/pymysql don't — and lets us return the same datetime we
+        # stored without a follow-up SELECT.
+        created_at = datetime.now(timezone.utc)
         async with self._engine.begin() as conn:
             result = await conn.execute(
-                v1_resume_matching_api_keys.insert()
-                .values(name=name, key_prefix=prefix, key_hash=key_hash)
-                .returning(
-                    v1_resume_matching_api_keys.c.id,
-                    v1_resume_matching_api_keys.c.created_at,
-                    v1_resume_matching_api_keys.c.revoked_at,
+                v1_resume_matching_api_keys.insert().values(
+                    name=name,
+                    key_prefix=prefix,
+                    key_hash=key_hash,
+                    created_at=created_at,
                 )
             )
-            row = result.one()
+            new_id = result.inserted_primary_key[0]
         record = ApiKeyRecord(
-            id=row.id, name=name, key_prefix=prefix,
-            created_at=row.created_at, revoked_at=row.revoked_at,
+            id=new_id, name=name, key_prefix=prefix,
+            created_at=created_at, revoked_at=None,
         )
         return plaintext, record
 

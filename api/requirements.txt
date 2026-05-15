@@ -4,8 +4,9 @@ python-multipart
 pydantic>=2.0.0
 sqlalchemy>=2.0.0
 greenlet
-asyncpg
-psycopg2-binary
+aiomysql
+pymysql
+cryptography
 httpx
 pypdf
 baml-py==0.220.0

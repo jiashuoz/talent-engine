@@ -38,8 +38,11 @@ pip install -r requirements-dev.txt
 # Generate the BAML client (gitignored — must regen after editing .baml)
 cd v1/resume_matching && baml-cli generate && cd ../..
 
-# Start a local Postgres (or set DATABASE_URL to your own)
-# docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=talent_engine postgres:15
+# Start a local MySQL (or set DATABASE_URL to your own)
+# docker run -d -p 3306:3306 \
+#   -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=talent_engine \
+#   -e MYSQL_USER=talent_engine -e MYSQL_PASSWORD=talent_engine \
+#   mysql:8.0
 
 cp ../.env.example ../.env  # edit values
 uvicorn main:app --reload
@@ -51,7 +54,7 @@ uvicorn main:app --reload
 cd api && pytest
 ```
 
-Tests use SQLite in-memory and stub the BAML client — no Postgres or LLM credentials required.
+Tests use SQLite in-memory and stub the BAML client — no MySQL or LLM credentials required.
 
 ## LLM provider selection
 

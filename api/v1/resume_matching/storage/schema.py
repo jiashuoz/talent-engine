@@ -39,7 +39,7 @@ v1_resume_matching_api_keys = Table(
     "v1_resume_matching_api_keys",
     metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("name", String, nullable=False),                  # operator-supplied label
+    Column("name", String(255), nullable=False),             # operator-supplied label
     Column("key_prefix", String(16), nullable=False),        # first 8 chars of plaintext
     Column("key_hash", String(64), nullable=False),          # sha256 hex
     Column("created_at", DateTime(timezone=True), nullable=False, default=_utcnow),
@@ -57,7 +57,7 @@ v1_resume_matching_usage = Table(
     metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("api_key_id", Integer, ForeignKey("v1_resume_matching_api_keys.id", ondelete="SET NULL"), nullable=True),
-    Column("endpoint", String, nullable=False),              # "match" | "match_async" | "match_poll"
+    Column("endpoint", String(32), nullable=False),          # "match" | "match_async" | "match_poll"
     Column("resume_count", Integer, nullable=False, default=0),
     Column("job_count", Integer, nullable=False, default=0),
     Column("pair_count", Integer, nullable=False, default=0),
@@ -65,9 +65,9 @@ v1_resume_matching_usage = Table(
     Column("input_tokens", Integer, nullable=False, default=0),
     Column("output_tokens", Integer, nullable=False, default=0),
     Column("elapsed_ms", Integer, nullable=False, default=0),
-    Column("status", String, nullable=False),                # "ok" | "error"
+    Column("status", String(16), nullable=False),            # "ok" | "error"
     Column("error", Text, nullable=True),
-    Column("client_ip", String, nullable=True),
+    Column("client_ip", String(64), nullable=True),          # ipv6 max is 45 chars
     Column("created_at", DateTime(timezone=True), nullable=False, default=_utcnow),
 
     Index("idx_v1_rm_usage_key_created", "api_key_id", "created_at"),

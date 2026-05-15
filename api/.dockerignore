@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# BAML — regenerated inside the image by `baml-cli generate` (Dockerfile line 20).
+# Keeping the local copy out of the build context avoids stale-client issues.
+v1/resume_matching/baml_client/
+
+# Tests + dev-only files. The image runs the API; tests run in CI / locally.
+**/tests/
+**/test_*.py
+requirements-dev.txt
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Local datasets — never bake candidate PDFs or JD text bundles into the image.
+data/
+datasets/
+*.pdf
+!v1/resume_matching/baml_src/**/*.pdf
+
+# Env files — secrets must come from the runtime env, never the image.
+.env
+.env.*
+!.env.example
