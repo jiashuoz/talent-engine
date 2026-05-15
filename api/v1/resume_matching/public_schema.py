@@ -157,13 +157,13 @@ class MatchStats(BaseModel):
 
 
 class MatchResponse(BaseModel):
-    """Response body for sync match + completed async-poll responses.
+    """Response body for the sync `/match` endpoint.
 
-    `status` is "completed" for sync and the terminal poll state for
-    async. Failed runs use status="failed" and put the reason on the
-    response (HTTP still 200 for async polls — the job exists, just
-    didn't succeed). Sync requests that fail at the pipeline level
-    surface as HTTP 5xx instead.
+    Sync always returns `status="completed"` — pipeline-level failures
+    surface as HTTP 5xx, not as a "failed"-status body. Per-pair failures
+    appear in `errors[]` alongside successful `matches[]`. Async polls
+    use the separate `AsyncPollResponse` shape (which does support
+    `status="failed"`).
     """
     status: str
     matches: List[MatchResultItem] = Field(default_factory=list)

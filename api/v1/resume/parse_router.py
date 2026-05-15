@@ -24,7 +24,9 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from v1.resume_matching.auth import require_api_key
+from v1.resume_matching.rate_limit import enforce_rate_limit
 from v1.resume_matching.baml_client.async_client import b
+from v1.resume_matching.llm_call import with_timeout_retry
 from v1.resume_matching.llm_config import resolve_llm_provider
 from v1.resume_matching.pipeline import _collector_tokens
 from v1.resume_matching.public_schema import from_baml_resume
@@ -75,7 +77,10 @@ async def _parse_one(
     collector = Collector(name="resume-parse")
     async with sem:
         try:
-            text = extract_pdf_text(pdf_bytes)
+            # pypdf is pure-Python and CPU-bound — a 5 MB PDF can block the
+            # event loop for hundreds of ms. Hand it off to the default thread
+            # pool so concurrent uploads (and /health) stay responsive.
+            text = await asyncio.to_thread(extract_pdf_text, pdf_bytes)
         except PdfExtractionError as e:
             return (
                 None,
@@ -89,9 +94,12 @@ async def _parse_one(
             )
 
         try:
-            baml_resume = await b.ParseResume(
-                text=text,
-                baml_options={"client": llm_provider, "collector": collector},
+            baml_resume = await with_timeout_retry(
+                lambda: b.ParseResume(
+                    text=text,
+                    baml_options={"client": llm_provider, "collector": collector},
+                ),
+                label=f"ParseResume[{filename}]",
             )
             in_tok, out_tok = _collector_tokens(collector)
             return (
@@ -136,7 +144,7 @@ async def parse_endpoint(
         default=None,
         description="Optional client-supplied ids, one per file in order. Defaults to filename.",
     ),
-    api_key: ApiKeyRecord = Depends(require_api_key),
+    api_key: ApiKeyRecord = Depends(enforce_rate_limit),
     engine: AsyncEngine = Depends(get_engine),
 ) -> ParseResponse:
     """Parse resume PDFs into the structured `Resume` shape consumed by /match.

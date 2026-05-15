@@ -8,16 +8,23 @@ Extracted from the `mnexa-ai` monorepo's `api/v1/resume_matching/` module. The f
 
 ```
 api/
-  main.py                      # FastAPI entrypoint, mounts routers
+  main.py                      # FastAPI entrypoint, mounts routers, /health
+  conftest.py                  # disables rate limiter for the test session
   v1/
     db/database.py             # async + sync engines, init_db, close_db
     routers/deps.py            # get_engine FastAPI dependency
+    resume/parse_router.py     # POST /v1/resume/parse (PDF → structured)
+    resume/pdf_text.py         # pypdf wrapper
+    job/parse_router.py        # POST /v1/job/parse (JD text → structured)
     resume_matching/           # the matching service
+      public_router.py         # POST /match, /match/async, GET /match/{id}
       pipeline.py              # parse + score orchestration
-      router.py                # streaming UI endpoint
-      public_router.py         # API-key gated JSON API
-      auth.py, rate_limit.py, notify.py, public_schema.py
-      baml_src/                # BAML prompts (Gemini)
+      auth.py                  # X-API-Key FastAPI dependency
+      rate_limit.py            # per-api_key_id token bucket
+      llm_call.py              # timeout + retry wrapper around BAML calls
+      llm_config.py            # LLM_PROVIDER env → BAML client name
+      public_schema.py         # public Pydantic models + BAML translators
+      baml_src/                # BAML prompts (4-provider clients)
       baml_client/             # GENERATED — run `baml-cli generate`
       storage/                 # api_keys + usage tables (own MetaData)
       tests/                   # pytest, sqlite in-memory

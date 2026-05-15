@@ -17,10 +17,12 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
-from baml_py import Pdf
+from baml_py import Collector, Pdf
 
 from v1.resume_matching.baml_client.async_client import b
 from v1.resume_matching.baml_client.types import Job, MatchScore, Resume
+from v1.resume_matching.llm_call import with_timeout_retry
+from v1.resume_matching.llm_config import resolve_llm_provider
 
 # Progress event callback signature. The router wires this to an SSE queue so
 # the frontend can render live counts. Keep callback non-awaiting-critical:
@@ -88,16 +90,18 @@ async def _parse_resume(item: ResumeInput) -> tuple[str, Optional[Resume], Optio
     `v1.resume.pdf_text.extract_pdf_text` for the rationale.
     """
     from v1.resume.pdf_text import PdfExtractionError, extract_pdf_text
-    from v1.resume_matching.llm_config import resolve_llm_provider
 
     try:
-        text = extract_pdf_text(item.pdf_bytes)
+        # See parse_router.py for the rationale — pypdf blocks the loop on
+        # multi-MB PDFs. Off to a worker thread.
+        text = await asyncio.to_thread(extract_pdf_text, item.pdf_bytes)
     except PdfExtractionError as e:
         return item.filename, None, f"PdfExtractionError: {e}"
+    provider = resolve_llm_provider()
     try:
-        resume = await b.ParseResume(
-            text=text,
-            baml_options={"client": resolve_llm_provider()},
+        resume = await with_timeout_retry(
+            lambda: b.ParseResume(text=text, baml_options={"client": provider}),
+            label=f"ParseResume[{item.filename}]",
         )
         return item.filename, resume, None
     except Exception as e:
@@ -126,8 +130,6 @@ async def _parse_jobs(item: JobInput) -> tuple[str, List[Job], Optional[str]]:
     so the pipeline still produces something instead of silently dropping
     the whole file.
     """
-    from v1.resume_matching.llm_config import resolve_llm_provider
-
     text = item.text
     provider = resolve_llm_provider()
     try:
@@ -140,14 +142,20 @@ async def _parse_jobs(item: JobInput) -> tuple[str, List[Job], Optional[str]]:
                 "No 招聘单位 headers in %s — falling back to list parse",
                 item.filename,
             )
-            jobs = await b.ParseJobDescriptions(
-                text=text,
-                baml_options={"client": provider},
+            jobs = await with_timeout_retry(
+                lambda: b.ParseJobDescriptions(text=text, baml_options={"client": provider}),
+                label=f"ParseJobDescriptions[{item.filename}]",
             )
             return item.filename, jobs, None
 
         parsed = await asyncio.gather(
-            *[b.ParseSingleJob(text=c, baml_options={"client": provider}) for c in chunks],
+            *[
+                with_timeout_retry(
+                    lambda c=c: b.ParseSingleJob(text=c, baml_options={"client": provider}),
+                    label=f"ParseSingleJob[{item.filename}]",
+                )
+                for c in chunks
+            ],
             return_exceptions=True,
         )
         jobs: List[Job] = []
@@ -232,6 +240,9 @@ async def score_pairs(
     sem = asyncio.Semaphore(max(1, concurrency))
     total = len(pairs)
     counter = {"done": 0}
+    # Resolve once per request — reading os.getenv on every pair adds nothing
+    # but makes behaviour non-monotonic if someone flips the env mid-batch.
+    provider = resolve_llm_provider()
 
     async def _emit() -> None:
         if on_progress is None:
@@ -246,14 +257,15 @@ async def score_pairs(
         # completes. Fetching usage is best-effort: a malformed response or
         # provider-side failure may leave it empty, in which case we attribute
         # 0 tokens rather than raise.
-        from baml_py import Collector
         collector = Collector(name="resume-matching-score")
         try:
             async with sem:
-                from v1.resume_matching.llm_config import resolve_llm_provider
-                score = await b.ScoreMatch(
-                    resume=resume, job=job,
-                    baml_options={"client": resolve_llm_provider(), "collector": collector},
+                score = await with_timeout_retry(
+                    lambda: b.ScoreMatch(
+                        resume=resume, job=job,
+                        baml_options={"client": provider, "collector": collector},
+                    ),
+                    label="ScoreMatch",
                 )
             in_tok, out_tok = _collector_tokens(collector)
             counter["done"] += 1
@@ -384,10 +396,12 @@ async def match_all(
     async def _match_one(resume_task: asyncio.Task) -> ResumeReport:
         filename, resume, err = await resume_task
         resume_counter["parsed"] += 1
+        # Don't include resume.name — PII landing in shared log aggregators
+        # would force a Data Processing Agreement with every partner. Filename
+        # is already a partner-supplied identifier (often desensitized).
         await _emit({
             "type": "resume_parsed",
             "filename": filename,
-            "name": (resume.name if resume else None),
             "resumes_parsed": resume_counter["parsed"],
             "resumes_total": total_resumes,
             "error": err,

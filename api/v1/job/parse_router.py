@@ -25,7 +25,9 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from v1.resume_matching.auth import require_api_key
+from v1.resume_matching.rate_limit import enforce_rate_limit
 from v1.resume_matching.baml_client.async_client import b
+from v1.resume_matching.llm_call import with_timeout_retry
 from v1.resume_matching.llm_config import resolve_llm_provider
 from v1.resume_matching.pipeline import _collector_tokens, _split_jd_text
 from v1.resume_matching.public_schema import from_baml_job
@@ -70,9 +72,12 @@ async def _parse_chunk(
     collector = Collector(name="job-parse-single")
     async with sem:
         try:
-            baml_job = await b.ParseSingleJob(
-                text=text,
-                baml_options={"client": llm_provider, "collector": collector},
+            baml_job = await with_timeout_retry(
+                lambda: b.ParseSingleJob(
+                    text=text,
+                    baml_options={"client": llm_provider, "collector": collector},
+                ),
+                label=f"ParseSingleJob[{filename}#{chunk_index}]",
             )
             in_tok, out_tok = _collector_tokens(collector)
             return (
@@ -118,9 +123,12 @@ async def _parse_bundle_fallback(
 
     collector = Collector(name="job-parse-list")
     try:
-        baml_jobs = await b.ParseJobDescriptions(
-            text=text,
-            baml_options={"client": llm_provider, "collector": collector},
+        baml_jobs = await with_timeout_retry(
+            lambda: b.ParseJobDescriptions(
+                text=text,
+                baml_options={"client": llm_provider, "collector": collector},
+            ),
+            label=f"ParseJobDescriptions[{filename}]",
         )
         in_tok, out_tok = _collector_tokens(collector)
         parsed = [
@@ -161,7 +169,7 @@ async def parse_endpoint(
         ...,
         description="One or more .txt files. Each may contain a single JD or a bundle separated by `招聘单位` headers.",
     ),
-    api_key: ApiKeyRecord = Depends(require_api_key),
+    api_key: ApiKeyRecord = Depends(enforce_rate_limit),
     engine: AsyncEngine = Depends(get_engine),
 ) -> ParseJobResponse:
     """Parse JD text bundles into the structured `Job` shape consumed by /match.

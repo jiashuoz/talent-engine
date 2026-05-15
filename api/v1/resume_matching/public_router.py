@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from v1.routers.deps import get_engine
 from v1.resume_matching.auth import require_api_key
+from v1.resume_matching.rate_limit import enforce_rate_limit
 from v1.resume_matching.pipeline import (
     DEFAULT_CONCURRENCY,
     PairScore,
@@ -200,7 +201,7 @@ def _client_ip(request: Request) -> Optional[str]:
     return None
 
 
-async def _resolve_concurrency(req: MatchRequest) -> int:
+def _resolve_concurrency(req: MatchRequest) -> int:
     requested = req.options.concurrency or DEFAULT_CONCURRENCY
     # Hard server cap so a client can't blow the LLM quota with one request.
     return max(1, min(requested, DEFAULT_CONCURRENCY * 2))
@@ -215,7 +216,7 @@ async def _resolve_concurrency(req: MatchRequest) -> int:
 async def match_sync(
     payload: MatchRequest,
     request: Request,
-    api_key: ApiKeyRecord = Depends(require_api_key),
+    api_key: ApiKeyRecord = Depends(enforce_rate_limit),
     engine: AsyncEngine = Depends(get_engine),
 ) -> MatchResponse:
     """Score every (resume × job) pair and return results inline.
@@ -227,7 +228,7 @@ async def match_sync(
     _validate(payload)
     started = time.perf_counter()
     pairs = _build_pairs(payload)
-    concurrency = await _resolve_concurrency(payload)
+    concurrency = _resolve_concurrency(payload)
 
     pair_results: List[PairScore] = []
     error_str: Optional[str] = None
@@ -262,7 +263,7 @@ async def match_sync(
 async def match_async(
     payload: MatchRequest,
     request: Request,
-    api_key: ApiKeyRecord = Depends(require_api_key),
+    api_key: ApiKeyRecord = Depends(enforce_rate_limit),
     engine: AsyncEngine = Depends(get_engine),
 ) -> AsyncJobAccepted:
     """Accept a match request and return a job_id to poll.
@@ -273,7 +274,7 @@ async def match_async(
     """
     _validate(payload)
     pairs = _build_pairs(payload)
-    concurrency = await _resolve_concurrency(payload)
+    concurrency = _resolve_concurrency(payload)
 
     job_id = "rmj_" + secrets.token_urlsafe(16)
     job = _AsyncJob(job_id=job_id, status="queued", pairs_total=len(pairs))

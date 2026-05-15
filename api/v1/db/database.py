@@ -76,12 +76,35 @@ def get_sync_engine() -> Engine:
 
 
 async def init_db() -> None:
-    """Create resume-matching tables on the sync engine."""
+    """Create resume-matching tables on the sync engine.
+
+    Retries a handful of times on transient connect failures so we survive
+    boot races where the API container starts a few seconds before MySQL
+    is reachable (common on 微信云托管 cold-starts and docker-compose).
+    Past that, errors propagate — a permanently broken connection should
+    fail the lifespan loudly so the platform restart-loops.
+    """
+    import asyncio
+
     from v1.resume_matching.storage import init_tables as init_resume_matching_tables
 
-    sync_engine = get_sync_engine()
-    init_resume_matching_tables(sync_engine)
-    logger.info("Database tables created")
+    last_exc: Exception | None = None
+    for attempt in range(1, 6):
+        try:
+            sync_engine = get_sync_engine()
+            init_resume_matching_tables(sync_engine)
+            logger.info("Database tables created (attempt %d)", attempt)
+            return
+        except Exception as e:
+            last_exc = e
+            wait = min(2 ** (attempt - 1), 8)  # 1, 2, 4, 8, 8 seconds
+            logger.warning(
+                "init_db attempt %d failed (%s); retrying in %ds",
+                attempt, type(e).__name__, wait,
+            )
+            await asyncio.sleep(wait)
+    assert last_exc is not None
+    raise last_exc
 
 
 async def close_db() -> None:
